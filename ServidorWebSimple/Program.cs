@@ -3,6 +3,7 @@ using System.IO;
 using System.Text;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.IO.Compression;
@@ -11,438 +12,449 @@ using System.Text.Json;
 class ServidorWebSimple
 {
     // --------------------------------------------------------------
-    // Clase interna de configuración del servidor
-    // Carga los valores de "config.json" 
+    // Campos estáticos y constantes
+    // --------------------------------------------------------------
+    private static readonly SemaphoreSlim LogLock = new(1, 1);
+    private const int BUFFER_SIZE = 8192;
+    private const int MAX_HEADER_SIZE = 64 * 1024;
+    private const int TIMEOUT_MS = 5000;
+    private static readonly CancellationTokenSource MainCts = new();
+
+    // --------------------------------------------------------------
+    // Configuración del servidor
     // --------------------------------------------------------------
     class Config
     {
-        public int Port { get; set; } 
-        public string ContentRoot { get; set; }
-    }
-
-    static Config CargarConfig()
-    {
-        var json = File.ReadAllText("config.json"); // Lee el contenido completo
-        return JsonSerializer.Deserialize<Config>(json)!; // Convierte el json a un objeto Config
+        public int Port { get; set; } = 8080;
+        public string ContentRoot { get; set; } = "www";
     }
 
     // --------------------------------------------------------------
-    // Tabla de tipos MIME para enviar el Content-Type correcto
-    // Sirve para servir los archivos correctamente y saber qué puede comprimir y qué no
+    // Encapsulación de solicitud HTTP
     // --------------------------------------------------------------
-
-    static readonly Dictionary<string, string> MimeTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    class HttpRequest
     {
-        {".html","text/html"},
-        {".htm","text/html"},
-        {".css","text/css"},
-        {".js","application/javascript"},
-        {".json","application/json"},
-        {".png","image/png"},
-        {".jpg","image/jpeg"},
-        {".jpeg","image/jpeg"},
-        {".gif","image/gif"},
-        {".svg","image/svg+xml"},
-        {".ico","image/x-icon"},
-        {".txt","text/plain"},
-        {".wav","audio/wav"},
-        {".mp4","video/mp4"},
-        {".pdf","application/pdf"},
+        public string Method { get; set; } = "";
+        public string RawUrl { get; set; } = "";
+        public string Path { get; set; } = "";
+        public Dictionary<string, string> QueryParams { get; set; } = new();
+        public Dictionary<string, string> Headers { get; set; } = new();
+        public string Body { get; set; } = "";
+    }
+
+    // --------------------------------------------------------------
+    // Tipos MIME soportados
+    // --------------------------------------------------------------
+    static readonly Dictionary<string, string> MimeTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        {".html", "text/html"},
+        {".htm", "text/html"},
+        {".css", "text/css"},
+        {".js", "application/javascript"},
+        {".json", "application/json"},
+        {".png", "image/png"},
+        {".jpg", "image/jpeg"},
+        {".jpeg", "image/jpeg"},
+        {".gif", "image/gif"},
+        {".svg", "image/svg+xml"},
+        {".ico", "image/x-icon"},
+        {".txt", "text/plain"},
+        {".wav", "audio/wav"},
+        {".mp4", "video/mp4"},
+        {".pdf", "application/pdf"}
     };
 
-    static string GetMime(string path)
-    {
-        var ext = Path.GetExtension(path);
-        if (ext != null && MimeTypes.TryGetValue(ext, out var m)) return m;
-        return "application/octet-stream"; // Tipo genérico
-    }
-
     // --------------------------------------------------------------
-    // Punto de entrada principal (asincrónico)
-    // Acepta conexiones TCP sin bloquear el hilo principal
-    // Cada conexión se maneja de forma independiente en un Task separado para permitir concurrencia
+    // Punto de entrada principal
     // --------------------------------------------------------------
     static async Task Main(string[] args)
     {
-        var cfg = CargarConfig();
-        var contentRoot = Path.GetFullPath(cfg.ContentRoot); // Obtiene la ruta absoluta del directorio raíz
-        Directory.CreateDirectory(contentRoot);
-        Directory.CreateDirectory("logs");
-
-        var listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp); // Crea un socket TCP que escuchará conexiones entrantes
-
-        listener.Bind(new IPEndPoint(IPAddress.Any, cfg.Port)); // Acepta conexiones desde cualquier IP en el puerto configurado
-        listener.Listen(100); // Permite hasta 100 conexiones simultáneas en cola
-
-        // Con lo anterior el puerto es configurable y se asegura la concurrencia
-
-        Console.WriteLine($"Servidor iniciado en puerto {cfg.Port}. Sirviendo desde: {contentRoot}");
-        Console.WriteLine("Ctrl + C para detener.");
-
-        var stop = false;
-        Console.CancelKeyPress += (s, e) => { e.Cancel = true; stop = true; listener.Close(); };
-
-        while (!stop) // Bucle principal de escucha: acepta clientes y los atiende en tareas separadas
+        try
         {
-            Socket client = null;
-            try
+            var config = CargarConfiguracion();
+            var contentRoot = Path.GetFullPath(config.ContentRoot);
+            Directory.CreateDirectory(contentRoot);
+            Directory.CreateDirectory("logs");
+
+            using var listener = new TcpListener(IPAddress.Any, config.Port);
+            listener.Start();
+
+            Console.WriteLine($"Servidor iniciado en puerto {config.Port}");
+            Console.WriteLine($"Sirviendo archivos desde: {contentRoot}");
+            Console.WriteLine("Presione Ctrl+C para detener el servidor");
+
+            Console.CancelKeyPress += (s, e) => {
+                e.Cancel = true;
+                MainCts.Cancel();
+            };
+
+            while (!MainCts.Token.IsCancellationRequested)
             {
-                client = await listener.AcceptAsync(); // Espera una conexión entrante
-                _ = Task.Run(() => HandleClient(client, contentRoot)); // Atiende al cliente en una tarea independiente
-            }
-            catch (ObjectDisposedException) { break; } // Sale del bucle si se cierra el listener
-            catch (Exception ex)
-            {
-                Console.WriteLine("Error accept: " + ex.Message);
+                try
+                {
+                    var client = await listener.AcceptTcpClientAsync(MainCts.Token);
+                    _ = ProcesarClienteAsync(client, contentRoot);
+                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception ex)
+                {
+                    await LogErrorAsync($"Error aceptando cliente: {ex.Message}");
+                }
             }
         }
-
-        Console.WriteLine("Servidor detenido.");
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error fatal: {ex.Message}");
+        }
+        finally
+        {
+            Console.WriteLine("Servidor detenido.");
+        }
     }
 
     // --------------------------------------------------------------
-    // Método asincrónico que maneja cada conexión individual de cliente
-    // Socket client es el socket específico para esa conexión
-    // contentRoot es la carpeta desde donde se sirven los archivos
-    // Lee la solicitud HTTP, procesa y envía la respuesta
+    // Procesamiento de cliente
     // --------------------------------------------------------------
-    static async Task HandleClient(Socket client, string contentRoot)
+    static async Task ProcesarClienteAsync(TcpClient client, string contentRoot)
     {
-        var remoteEP = client.RemoteEndPoint?.ToString() ?? "unknown"; // IP y puerto del cliente conectado. Si no está disponible, entonces: unknown
-        // Con esto obtenemos la IP de origen para los logs
-
-        try
+        using (client)
         {
-            using var network = new NetworkStream(client, ownsSocket: true);
-            // NetworkStream envuelve el socket para facilitar la lectura y escritura de datos. 
-            // ownsSocket: true indica que al cerrar el stream se cerrará también el socket subyacente.
-            network.ReadTimeout = 5000;
-            network.WriteTimeout = 5000;
+            var remoteEp = (client.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? "unknown";
 
-            // ------------------ Lectura del encabezado HTTP ------------------
-            // Lee datos del NetworkStream hasta encontrar el final de los headers (\r\n\r\n)
-            // Con esto el servidor parsea HTTP manualmente sin librerías externas
-            var headerBuilder = new StringBuilder();
-            var buffer = new byte[8192];
-            int bytesRead = 0;
-            int totalRead = 0;
-            bool headersComplete = false;
-            while (!headersComplete && (bytesRead = await network.ReadAsync(buffer, 0, buffer.Length)) > 0)
+            try
             {
-                totalRead += bytesRead;
-                var chunk = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                headerBuilder.Append(chunk);
-                if (headerBuilder.ToString().Contains("\r\n\r\n"))
+                using var stream = client.GetStream();
+                var request = await LeerSolicitudHttpAsync(stream);
+                if (request == null) return;
+
+                await LogRequestAsync(request, remoteEp);
+
+                if (!request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
+                    !request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase))
                 {
-                    headersComplete = true;
-                    break;
+                    await EnviarRespuestaSimpleAsync(stream, "501 Not Implemented", 
+                        "text/plain", "Método no soportado");
+                    return;
                 }
-                // Protección frente a ataques de header gigante
-                if (totalRead > 64 * 1024) break; // Protección contra headers excesivos
+
+                var path = request.Path == "/" ? "/index.html" : request.Path;
+                var fullPath = ObtenerRutaSegura(path, contentRoot);
+                
+                if (fullPath == null)
+                {
+                    await EnviarRespuestaSimpleAsync(stream, "403 Forbidden", 
+                        "text/plain", "Acceso denegado");
+                    return;
+                }
+
+                if (!File.Exists(fullPath))
+                {
+                    await Enviar404Async(stream, contentRoot);
+                    return;
+                }
+
+                await EnviarArchivoAsync(stream, fullPath, request.Headers);
+            }
+            catch (Exception ex)
+            {
+                await LogErrorAsync($"Error procesando cliente {remoteEp}: {ex.Message}");
+            }
+        }
+    }
+
+    // --------------------------------------------------------------
+    // Lectura y parseo de solicitud HTTP
+    // --------------------------------------------------------------
+    static async Task<HttpRequest?> LeerSolicitudHttpAsync(NetworkStream stream)
+    {
+        var headerBuilder = new StringBuilder();
+        var buffer = new byte[BUFFER_SIZE];
+        var totalRead = 0;
+        var request = new HttpRequest();
+
+    // Leer headers
+    while (totalRead < MAX_HEADER_SIZE)
+    {
+        using var headerCts = new CancellationTokenSource(TIMEOUT_MS);
+        var bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length, headerCts.Token);
+        if (bytesRead == 0) return null;
+
+        totalRead += bytesRead;
+        var chunk = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+        headerBuilder.Append(chunk);
+
+        var headerStr = headerBuilder.ToString();
+        var headerEnd = headerStr.IndexOf("\r\n\r\n");
+        if (headerEnd >= 0)
+        {
+            var headerText = headerStr.Substring(0, headerEnd);
+            var remainingData = headerStr.Substring(headerEnd + 4);
+
+            // Parsear la línea de solicitud
+            var headerLines = headerText.Split("\r\n");
+            var requestLine = headerLines[0].Split(' ');
+            if (requestLine.Length < 2) return null;
+
+            request.Method = requestLine[0];
+            request.RawUrl = requestLine[1];
+
+            // Parsear URL y query params
+            var urlParts = request.RawUrl.Split('?', 2);
+            request.Path = Uri.UnescapeDataString(urlParts[0]);
+            if (urlParts.Length > 1)
+            {
+                request.QueryParams = ParseQueryString(urlParts[1]);
             }
 
-            // Esto separa headers y body (si hay body).
-            // headerText contiene sólo los headers
-            // remainingAfterHeaders contiene cualquier dato leído después de los headers (parte del body)
-            var headerStr = headerBuilder.ToString();
-            if (string.IsNullOrEmpty(headerStr))
-                return;
-
-            var headerParts = headerStr.Split(new string[] { "\r\n\r\n" }, 2, StringSplitOptions.None);
-            var headerText = headerParts[0];
-            var remainingAfterHeaders = headerParts.Length > 1 ? headerParts[1] : "";
-
-            // ------------------ Parseo de la línea de solicitud ------------------
-            // Separa método (GET o POST), rawUrl (index.html) y httpVersion (HTTP/1.1)
-            using var reader = new StringReader(headerText);
-            var requestLine = reader.ReadLine();
-            if (requestLine == null) return;
-            var requestTokens = requestLine.Split(' ');
-            if (requestTokens.Length < 2) return;
-            var method = requestTokens[0];
-            var rawUrl = requestTokens[1];
-            var httpVersion = requestTokens.Length > 2 ? requestTokens[2] : "HTTP/1.1";
-
-            // ------------------ Parseo de headers ------------------
-            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            string line;
-            while (!string.IsNullOrEmpty(line = reader.ReadLine()))
+            // Parsear headers
+            for (int i = 1; i < headerLines.Length; i++)
             {
+                var line = headerLines[i];
                 var idx = line.IndexOf(':');
                 if (idx > 0)
                 {
                     var name = line.Substring(0, idx).Trim();
                     var value = line.Substring(idx + 1).Trim();
-                    headers[name] = value;
+                    request.Headers[name] = value;
                 }
             }
 
-            // ------------------ Parseo de la URL y parámetros de consulta ------------------
-            // ParseQueryString es un método auxiliar para convertirlo en un diccionario
-            // Cumple el requisito de manejar parámetros de consulta desde la URL (sólo loguearlos)
-            string pathPart = rawUrl;
-            string queryString = "";
-            var qIdx = rawUrl.IndexOf('?');
-            if (qIdx >= 0)
+            // Leer body si es POST
+            if (request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) &&
+                request.Headers.TryGetValue("Content-Length", out var lenStr) &&
+                int.TryParse(lenStr, out var contentLength))
             {
-                pathPart = rawUrl.Substring(0, qIdx);
-                queryString = rawUrl.Substring(qIdx + 1);
-            }
-            var queryParams = ParseQueryString(queryString);
-
-            // ------------------ Lectura del cuerpo (para POST) ------------------
-            // Si el método es POST, busca el header Content-Length para saber cuánto leer del body
-            // Cumple el requisito de aceptar solicitudes POST y sólo loguear los datos recibidos
-            string body = "";
-            if (method.Equals("POST", StringComparison.OrdinalIgnoreCase))
-            {
-                int contentLength = 0;
-                if (headers.TryGetValue("Content-Length", out var clStr))
-                    int.TryParse(clStr, out contentLength);
-
                 var bodyBuilder = new MemoryStream();
-                // El bloque remainingAfterHeaders puede contener parte del body
-                if (!string.IsNullOrEmpty(remainingAfterHeaders))
+                
+                // Procesar datos ya leídos
+                if (!string.IsNullOrEmpty(remainingData))
                 {
-                    var b = Encoding.UTF8.GetBytes(remainingAfterHeaders);
-                    bodyBuilder.Write(b, 0, b.Length);
+                    var remainingBytes = Encoding.UTF8.GetBytes(remainingData);
+                    bodyBuilder.Write(remainingBytes, 0, remainingBytes.Length);
                 }
 
-                int remaining = contentLength - (int)bodyBuilder.Length;
+                // Leer el resto del body
+                var remaining = contentLength - (int)bodyBuilder.Length;
                 while (remaining > 0)
                 {
-                    int toRead = Math.Min(buffer.Length, remaining);
-                    int n = await network.ReadAsync(buffer, 0, toRead);
-                    if (n <= 0) break;
-                    bodyBuilder.Write(buffer, 0, n);
-                    remaining -= n;
+                    using var bodyCts = new CancellationTokenSource(TIMEOUT_MS);
+                    var toRead = Math.Min(buffer.Length, remaining);
+                    var read = await stream.ReadAsync(buffer, 0, toRead, bodyCts.Token);
+                    if (read == 0) break;
+
+                    bodyBuilder.Write(buffer, 0, read);
+                    remaining -= read;
                 }
 
-                body = Encoding.UTF8.GetString(bodyBuilder.ToArray());
+                request.Body = Encoding.UTF8.GetString(bodyBuilder.ToArray());
             }
 
-            // ------------------ Logueo de la solicitud ------------------
-            LogRequest(method, rawUrl, headers, queryParams, body, client);
-
-            // ------------------ Validación de métodos soportados ------------------
-            // Si el método es distinto a GET o POST, responde con 501 Not Implemented
-            if (!method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
-                !method.Equals("POST", StringComparison.OrdinalIgnoreCase))
-            {
-                await WriteSimpleResponse(network, "501 Not Implemented", "text/plain", Encoding.UTF8.GetBytes("501 Not Implemented"), null, httpVersion);
-                return;
-            }
-
-            // ------------------ Resolución de rutas ------------------
-            // Normalizo el path para evitar problemas con encoding de URL (ej: %20 = espacio)
-            var urlPath = Uri.UnescapeDataString(pathPart);
-            if (urlPath == "/") urlPath = "/index.html"; // Si no se especifica archivo, sirve index.html por defecto
-
-            // Evito ataques de directory traversal:
-            var requestedPath = urlPath.TrimStart('/');
-            var fullPath = Path.GetFullPath(Path.Combine(contentRoot, requestedPath));
-            if (!fullPath.StartsWith(contentRoot))
-            {
-                // Si se intenta acceder fuera de contentRoot, responde con 403 Forbidden
-                await WriteSimpleResponse(network, "403 Forbidden", "text/plain", Encoding.UTF8.GetBytes("403 Forbidden"), null, httpVersion);
-                return;
-            }
-
-            // ------------------ Envío del archivo solicitado ------------------
-            if (File.Exists(fullPath))
-            {
-                byte[] fileBytes = await File.ReadAllBytesAsync(fullPath); // Leo el archivo en bytes
-                var mime = GetMime(fullPath); // Obtengo el tipo MIME según la extensión
-
-                // Verifico si el cliente acepta gzip y el recurso es compresible (text, js, css, html, json)
-                var acceptEnc = headers.ContainsKey("Accept-Encoding") ? headers["Accept-Encoding"] : "";
-                bool gzipOk = acceptEnc.Contains("gzip", StringComparison.OrdinalIgnoreCase)
-                              && (mime.StartsWith("text/") || mime == "application/javascript" || mime == "application/json" || mime.EndsWith("xml"));
-
-                if (gzipOk) // Si el cliente acepta gzip, comprimo y envío con Content-Encoding: gzip
-                {
-                    byte[] gzipped;
-                    using (var ms = new MemoryStream())
-                    {
-                        using (var gz = new GZipStream(ms, CompressionLevel.Optimal, leaveOpen: true)) // GZipStream para comprimir
-                        {
-                            await gz.WriteAsync(fileBytes, 0, fileBytes.Length);
-                        }
-                        gzipped = ms.ToArray();
-                    }
-
-                    // Envío la respuesta con los headers adecuados
-                    var headersResp = new Dictionary<string, string>
-                    {
-                        {"Content-Encoding", "gzip"},
-                        {"Content-Type", mime},
-                        {"Vary", "Accept-Encoding"}
-                    };
-                    await WriteSimpleResponse(network, "200 OK", mime, gzipped, headersResp, httpVersion);
-
-                    // Cumple el requisito de utilizar compresión de archivos para responder
-                }
-                else
-                {
-                    var headersResp = new Dictionary<string, string>
-                    {
-                        {"Content-Type", mime}
-                    };
-                    await WriteSimpleResponse(network, "200 OK", mime, fileBytes, headersResp, httpVersion);
-
-                    // Envía el archivo sin comprimir
-                }
-            }
-            else
-            {
-                // ------------------ Respuesta 404 personalizada ------------------
-                var custom404 = Path.Combine(contentRoot, "404.html");
-
-                // Opción de seguridad: verificar que exista el archivo
-                if (!File.Exists(custom404))
-                    throw new FileNotFoundException("No se encontró el archivo 404.html en la carpeta raíz.");
-
-                // Carga el contenido del 404.html y lo devuelve con código 404.
-                var bytes = await File.ReadAllBytesAsync(custom404);
-                var headersResp = new Dictionary<string, string> { { "Content-Type", "text/html" } };
-                await WriteStatusResponse(network, "404 Not Found", bytes, headersResp, httpVersion);
-            }
+            return request;
         }
-        catch (Exception ex)
+    }
+
+    return null;
+}
+
+    // --------------------------------------------------------------
+    // Envío de archivos
+    // --------------------------------------------------------------
+    static async Task EnviarArchivoAsync(NetworkStream stream, string path, 
+        Dictionary<string, string> requestHeaders)
+    {
+        var mime = ObtenerMimeType(path);
+        var fileInfo = new FileInfo(path);
+        
+        var acceptGzip = requestHeaders.TryGetValue("Accept-Encoding", out var enc) && 
+                        enc.Contains("gzip", StringComparison.OrdinalIgnoreCase);
+        var shouldCompress = acceptGzip && EsComprimible(mime);
+
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var headers = new Dictionary<string, string>
         {
-            // Cualquier error durante el manejo del cliente se registra en consola
-            Console.WriteLine($"Error manejando cliente {remoteEP}: {ex.Message}");
+            ["Content-Type"] = mime
+        };
+
+        if (shouldCompress)
+        {
+            headers["Content-Encoding"] = "gzip";
+            headers["Vary"] = "Accept-Encoding";
+            
+            await EnviarHeadersAsync(stream, "200 OK", headers);
+            using var gzip = new GZipStream(stream, CompressionLevel.Fastest, true);
+            await fs.CopyToAsync(gzip);
         }
-        finally
+        else
         {
-            // Se cierra el socket y la conexión de manera limpia y ordenada
-            try { client.Shutdown(SocketShutdown.Both); } catch { }
-            client.Close();
+            headers["Content-Length"] = fileInfo.Length.ToString();
+            await EnviarHeadersAsync(stream, "200 OK", headers);
+            await fs.CopyToAsync(stream);
         }
     }
 
     // --------------------------------------------------------------
-    // Esta función es la encargada de escribir la respuesta HTTP completa en el NetworkStream
-    // Cada vez que el servidor debe devolver algo, usa esta función
-    // Construye y envía una respuesta HTTP completa
+    // Manejo de respuestas HTTP
     // --------------------------------------------------------------
-    static async Task WriteSimpleResponse(NetworkStream network, string status, string contentType, byte[] body, Dictionary<string, string>? extraHeaders, string httpVersion)
+    static async Task Enviar404Async(NetworkStream stream, string contentRoot)
     {
-        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        headers["Content-Length"] = body?.Length.ToString() ?? "0"; // Crea un diccionario de headers HTTP, calcula el Content-Length para que el navegador sepa cuánto leer y, si no hay cuerpo, el tamaño es 0
-        // Con esto construyo las respuestas HTTP de forma manual
+        var custom404 = Path.Combine(contentRoot, "404.html");
+        string content;
+        string contentType = "text/html";
 
-        if (!headers.ContainsKey("Content-Type") && !string.IsNullOrEmpty(contentType))
-            headers["Content-Type"] = contentType; // Asegura que la respuesta tenga un tipo de contenido. Si Content-Type no se añadó antes, usa el que se pasó por parámetro
-
-        if (extraHeaders != null)
+        if (File.Exists(custom404))
         {
-            foreach (var kv in extraHeaders) headers[kv.Key] = kv.Value;
-            // Permite incluir headers adicionales (Content-Encoding: gzip, por ejemplo)
-            // Se usa para respuestas comprimidas o con metadatos especiales
+            content = await File.ReadAllTextAsync(custom404);
+        }
+        else
+        {
+            content = "<h1>404 - No encontrado</h1>";
         }
 
+        await EnviarRespuestaSimpleAsync(stream, "404 Not Found", contentType, content);
+    }
+
+    static async Task EnviarRespuestaSimpleAsync(NetworkStream stream, string status, 
+        string contentType, string content)
+    {
+        var bytes = Encoding.UTF8.GetBytes(content);
+        var headers = new Dictionary<string, string>
+        {
+            ["Content-Type"] = contentType,
+            ["Content-Length"] = bytes.Length.ToString()
+        };
+
+        await EnviarHeadersAsync(stream, status, headers);
+        await stream.WriteAsync(bytes);
+    }
+
+    static async Task EnviarHeadersAsync(NetworkStream stream, string status, 
+        Dictionary<string, string> headers)
+    {
         var sb = new StringBuilder();
-        sb.Append($"{httpVersion} {status}\r\n"); // Construye la primera línea de la respuesta HTTP con la versión y el estado
-
-        foreach (var kv in headers)
+        sb.AppendLine($"HTTP/1.1 {status}");
+        foreach (var header in headers)
         {
-            sb.Append($"{kv.Key}: {kv.Value}\r\n"); // Agrega todos los headers al texto de respuesta
-        }
-        sb.Append("\r\n"); // Línea en blanco que separa headers del body
-
-        var headBytes = Encoding.UTF8.GetBytes(sb.ToString()); // Convierte headers a bytes UTF-8 para enviar por la red
-        await network.WriteAsync(headBytes, 0, headBytes.Length); // Envía los headers al cliente a través de NetworkStream
-
-        if (body != null && body.Length > 0) // Si hay cuerpo, lo envía después de los headers
-            await network.WriteAsync(body, 0, body.Length);
-    }
-
-    // Esto es un atajo para evitar repetición en el código.
-    // Variante de WriteSimpleResponse para respuestas con estado específico (404, 403, etc.)
-    static async Task WriteStatusResponse(NetworkStream network, string status, byte[] body, Dictionary<string, string>? extraHeaders, string httpVersion)
-    {
-        await WriteSimpleResponse(
-            network,
-            status,
-            extraHeaders != null && extraHeaders.ContainsKey("Content-Type") ? extraHeaders["Content-Type"] : "text/html",
-            body,
-            extraHeaders,
-            httpVersion
-        );
-    }
-
-    // --------------------------------------------------------------
-    // Convierte una query string a diccionario clave-valor
-    // --------------------------------------------------------------
-    static Dictionary<string, string> ParseQueryString(string q)
-    {
-        var dict = new Dictionary<string, string>();
-        if (string.IsNullOrEmpty(q)) return dict; // Si la query string está vacía, devuelve un diccionario vacío
-
-        var parts = q.Split('&', StringSplitOptions.RemoveEmptyEntries); // Divide la query por & para separar los pares
-        foreach (var p in parts)
-        {
-            var idx = p.IndexOf('='); // Divide cada par por = para separar clave y valor
-            if (idx >= 0)
-            {
-                // UrlDecode para traducir caracteres especiales (ej: %20 = espacio)
-                var k = WebUtility.UrlDecode(p.Substring(0, idx));
-                var v = WebUtility.UrlDecode(p.Substring(idx + 1));
-                dict[k] = v;
-            }
-            else
-            {
-                dict[WebUtility.UrlDecode(p)] = "";
-            }
-        }
-        return dict;
-    }
-
-    // --------------------------------------------------------------
-    // LogRequest tiene dos sobrecargas. Una recibe el socket del cliente para extraer la IP y la otra recibe la IP directamente (para el log)
-    // --------------------------------------------------------------
-    static void LogRequest(string method, string rawUrl, Dictionary<string, string> headers, Dictionary<string, string> queryParams, string body, Socket client)
-    {
-        var ip = (client.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? "unknown"; // Obtiene la IP del cliente desde el socket
-        LogRequest(method, rawUrl, headers, queryParams, body, ip); // Llama a la otra sobrecarga pasando la IP
-    }
-
-    static void LogRequest(string method, string rawUrl, Dictionary<string,string> headers, Dictionary<string,string> queryParams, string body, string ip)
-    {
-        var date = DateTime.UtcNow;
-        var logfile = Path.Combine("logs", date.ToString("yyyy-MM-dd") + ".log"); // Genero el nombre del archivo de log según la fecha actual
-        var sb = new StringBuilder();
-        sb.AppendLine("-------------------------");
-        sb.AppendLine($"Fecha y hora: {date:O}");
-        sb.AppendLine($"IP del cliente: {ip}");
-        sb.AppendLine($"Método: {method}");
-        sb.AppendLine($"URL: {rawUrl}");
-        if (queryParams.Count > 0)
-        {
-            sb.AppendLine("Parámetros de query:"); // Si los hay, los listo
-            foreach (var q in queryParams)
-                sb.AppendLine($"  {q.Key} = {q.Value}");
-        }
-        sb.AppendLine("Headers:");
-        foreach (var h in headers)
-            sb.AppendLine($"  {h.Key}: {h.Value}"); // Agrego todos los headers HTTP que el cliente envió (Host, User-Agent, etc)
-
-        if (method.Equals("POST", StringComparison.OrdinalIgnoreCase)) // Si la solicitud es POST, guardo el contenido del cuerpo
-        {
-            sb.AppendLine("Body:");
-            sb.AppendLine(body);
+            sb.AppendLine($"{header.Key}: {header.Value}");
         }
         sb.AppendLine();
 
-        // Escribo el log en el archivo correspondiente
+        var headerBytes = Encoding.ASCII.GetBytes(sb.ToString());
+        await stream.WriteAsync(headerBytes);
+    }
+
+    // --------------------------------------------------------------
+    // Logging thread-safe
+    // --------------------------------------------------------------
+    static async Task LogRequestAsync(HttpRequest request, string clientIp)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("-------------------------");
+        sb.AppendLine($"Fecha y hora: {DateTime.UtcNow:O}");
+        sb.AppendLine($"IP del cliente: {clientIp}");
+        sb.AppendLine($"Método: {request.Method}");
+        sb.AppendLine($"URL: {request.RawUrl}");
+
+        if (request.QueryParams.Count > 0)
+        {
+            sb.AppendLine("Parámetros de query:");
+            foreach (var param in request.QueryParams)
+            {
+                sb.AppendLine($"  {param.Key} = {param.Value}");
+            }
+        }
+
+        sb.AppendLine("Headers:");
+        foreach (var header in request.Headers)
+        {
+            sb.AppendLine($"  {header.Key}: {header.Value}");
+        }
+
+        if (request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase))
+        {
+            sb.AppendLine("Body:");
+            sb.AppendLine(request.Body);
+        }
+
+        sb.AppendLine();
+
+        await LogLock.WaitAsync();
         try
         {
-            File.AppendAllText(logfile, sb.ToString()); // AppendAllText añade al final del archivo sin sobrescribir lo que ya había
+            var logPath = Path.Combine("logs", $"{DateTime.UtcNow:yyyy-MM-dd}.log");
+            await File.AppendAllTextAsync(logPath, sb.ToString());
         }
-        catch (Exception ex)
+        finally
         {
-            Console.WriteLine("Error escribiendo log: " + ex.Message);
+            LogLock.Release();
         }
+    }
+
+    static async Task LogErrorAsync(string mensaje)
+    {
+        await LogLock.WaitAsync();
+        try
+        {
+            var logPath = Path.Combine("logs", $"{DateTime.UtcNow:yyyy-MM-dd}.log");
+            await File.AppendAllTextAsync(logPath, 
+                $"ERROR: {mensaje} ({DateTime.UtcNow:O}){Environment.NewLine}");
+        }
+        finally
+        {
+            LogLock.Release();
+        }
+    }
+
+    // --------------------------------------------------------------
+    // Métodos auxiliares
+    // --------------------------------------------------------------
+    static string? ObtenerRutaSegura(string requestPath, string contentRoot)
+    {
+        var decoded = WebUtility.UrlDecode(requestPath.TrimStart('/'));
+        var fullPath = Path.GetFullPath(Path.Combine(contentRoot, decoded));
+        var contentRootNormalized = contentRoot.EndsWith(Path.DirectorySeparatorChar.ToString()) 
+            ? contentRoot 
+            : contentRoot + Path.DirectorySeparatorChar;
+        
+        return fullPath.StartsWith(contentRootNormalized, StringComparison.OrdinalIgnoreCase) 
+            ? fullPath 
+            : null;
+    }
+
+    static string ObtenerMimeType(string path)
+    {
+        var ext = Path.GetExtension(path);
+        return MimeTypes.TryGetValue(ext, out var mime) ? mime : "application/octet-stream";
+    }
+
+    static bool EsComprimible(string mime) =>
+        mime.StartsWith("text/") || 
+        mime == "application/javascript" || 
+        mime == "application/json" || 
+        mime.EndsWith("xml");
+
+    static Dictionary<string, string> ParseQueryString(string query)
+    {
+        var dict = new Dictionary<string, string>();
+        if (string.IsNullOrEmpty(query)) return dict;
+
+        var parts = query.Split('&', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var part in parts)
+        {
+            var keyValue = part.Split('=', 2);
+            var key = WebUtility.UrlDecode(keyValue[0]);
+            var value = keyValue.Length > 1 ? WebUtility.UrlDecode(keyValue[1]) : "";
+            dict[key] = value;
+        }
+
+        return dict;
+    }
+
+    static Config CargarConfiguracion()
+    {
+        if (!File.Exists("config.json"))
+            return new Config();
+
+        var json = File.ReadAllText("config.json");
+        return JsonSerializer.Deserialize<Config>(json) ?? new Config();
     }
 }

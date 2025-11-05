@@ -13,3 +13,18 @@ C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\obj\Debu
 C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.pdb
 C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.genruntimeconfig.cache
 C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\obj\Debug\net9.0\ref\ServidorWebSimple.dll
+C:\Users\Elian\Desktop\3er Año\programacionsr\Proyecto-Final---Nahuel-Perea\ServidorWebSimple\bin\Debug\net9.0\ServidorWebSimple.exe
+C:\Users\Elian\Desktop\3er Año\programacionsr\Proyecto-Final---Nahuel-Perea\ServidorWebSimple\bin\Debug\net9.0\ServidorWebSimple.deps.json
+C:\Users\Elian\Desktop\3er Año\programacionsr\Proyecto-Final---Nahuel-Perea\ServidorWebSimple\bin\Debug\net9.0\ServidorWebSimple.runtimeconfig.json
+C:\Users\Elian\Desktop\3er Año\programacionsr\Proyecto-Final---Nahuel-Perea\ServidorWebSimple\bin\Debug\net9.0\ServidorWebSimple.dll
+C:\Users\Elian\Desktop\3er Año\programacionsr\Proyecto-Final---Nahuel-Perea\ServidorWebSimple\bin\Debug\net9.0\ServidorWebSimple.pdb
+C:\Users\Elian\Desktop\3er Año\programacionsr\Proyecto-Final---Nahuel-Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Elian\Desktop\3er Año\programacionsr\Proyecto-Final---Nahuel-Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.AssemblyInfoInputs.cache
+C:\Users\Elian\Desktop\3er Año\programacionsr\Proyecto-Final---Nahuel-Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.AssemblyInfo.cs
+C:\Users\Elian\Desktop\3er Año\programacionsr\Proyecto-Final---Nahuel-Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.csproj.CoreCompileInputs.cache
+C:\Users\Elian\Desktop\3er Año\programacionsr\Proyecto-Final---Nahuel-Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.sourcelink.json
+C:\Users\Elian\Desktop\3er Año\programacionsr\Proyecto-Final---Nahuel-Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.dll
+C:\Users\Elian\Desktop\3er Año\programacionsr\Proyecto-Final---Nahuel-Perea\ServidorWebSimple\obj\Debug\net9.0\refint\ServidorWebSimple.dll
+C:\Users\Elian\Desktop\3er Año\programacionsr\Proyecto-Final---Nahuel-Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.pdb
+C:\Users\Elian\Desktop\3er Año\programacionsr\Proyecto-Final---Nahuel-Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.genruntimeconfig.cache
+C:\Users\Elian\Desktop\3er Año\programacionsr\Proyecto-Final---Nahuel-Perea\ServidorWebSimple\obj\Debug\net9.0\ref\ServidorWebSimple.dll
