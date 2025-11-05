@@ -1,0 +1,15 @@
+C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\bin\Debug\net9.0\ServidorWebSimple.exe
+C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\bin\Debug\net9.0\ServidorWebSimple.deps.json
+C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\bin\Debug\net9.0\ServidorWebSimple.runtimeconfig.json
+C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\bin\Debug\net9.0\ServidorWebSimple.dll
+C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\bin\Debug\net9.0\ServidorWebSimple.pdb
+C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.AssemblyInfoInputs.cache
+C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.AssemblyInfo.cs
+C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.csproj.CoreCompileInputs.cache
+C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.sourcelink.json
+C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.dll
+C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\obj\Debug\net9.0\refint\ServidorWebSimple.dll
+C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.pdb
+C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\obj\Debug\net9.0\ServidorWebSimple.genruntimeconfig.cache
+C:\Users\sever\Desktop\Proyecto Final - Nahuel, Perea\ServidorWebSimple\obj\Debug\net9.0\ref\ServidorWebSimple.dll
