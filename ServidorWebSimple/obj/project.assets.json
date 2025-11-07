@@ -8,24 +8,26 @@
     "net9.0": []
   },
   "packageFolders": {
-    "C:\\Users\\Elian\\.nuget\\packages\\": {}
+    "C:\\Users\\sever\\.nuget\\packages\\": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\Elian\\Desktop\\3er Año\\programacionsr\\Proyecto-Final---Nahuel-Perea\\ServidorWebSimple\\ServidorWebSimple.csproj",
+      "projectUniqueName": "C:\\Users\\sever\\Desktop\\Proyecto Final - Nahuel, Perea\\ServidorWebSimple\\ServidorWebSimple.csproj",
       "projectName": "ServidorWebSimple",
-      "projectPath": "C:\\Users\\Elian\\Desktop\\3er Año\\programacionsr\\Proyecto-Final---Nahuel-Perea\\ServidorWebSimple\\ServidorWebSimple.csproj",
-      "packagesPath": "C:\\Users\\Elian\\.nuget\\packages\\",
-      "outputPath": "C:\\Users\\Elian\\Desktop\\3er Año\\programacionsr\\Proyecto-Final---Nahuel-Perea\\ServidorWebSimple\\obj\\",
+      "projectPath": "C:\\Users\\sever\\Desktop\\Proyecto Final - Nahuel, Perea\\ServidorWebSimple\\ServidorWebSimple.csproj",
+      "packagesPath": "C:\\Users\\sever\\.nuget\\packages\\",
+      "outputPath": "C:\\Users\\sever\\Desktop\\Proyecto Final - Nahuel, Perea\\ServidorWebSimple\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "C:\\Users\\Elian\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        "C:\\Users\\sever\\AppData\\Roaming\\NuGet\\NuGet.Config",
+        "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
       ],
       "originalTargetFrameworks": [
         "net9.0"
       ],
       "sources": {
+        "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
         "https://api.nuget.org/v3/index.json": {}
       },
       "frameworks": {

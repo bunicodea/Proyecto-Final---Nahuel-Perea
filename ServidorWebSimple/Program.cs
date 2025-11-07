@@ -25,8 +25,14 @@ class ServidorWebSimple
     // --------------------------------------------------------------
     class Config
     {
-        public int Port { get; set; } = 8080;
-        public string ContentRoot { get; set; } = "www";
+        public int Port { get; set; }
+        public string ContentRoot { get; set; }
+    }
+
+    static Config CargarConfiguracion()
+    {
+        var json = File.ReadAllText("config.json"); // Lee el contenido completo
+        return JsonSerializer.Deserialize<Config>(json)!; // Convierte el json a un objeto Config
     }
 
     // --------------------------------------------------------------
@@ -447,14 +453,5 @@ class ServidorWebSimple
         }
 
         return dict;
-    }
-
-    static Config CargarConfiguracion()
-    {
-        if (!File.Exists("config.json"))
-            return new Config();
-
-        var json = File.ReadAllText("config.json");
-        return JsonSerializer.Deserialize<Config>(json) ?? new Config();
     }
 }
