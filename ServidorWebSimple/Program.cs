@@ -49,7 +49,7 @@ class ServidorWebSimple
     }
 
     // --------------------------------------------------------------
-    // Tipos MIME soportados
+    // Tipos MIME soportados - Multipurpose Internet Mail Extensions
     // --------------------------------------------------------------
     static readonly Dictionary<string, string> MimeTypes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -99,7 +99,7 @@ class ServidorWebSimple
                 try
                 {
                     var client = await listener.AcceptTcpClientAsync(MainCts.Token);
-                    _ = ProcesarClienteAsync(client, contentRoot);
+                    _ = ProcesarClienteAsync(client, contentRoot); // no espera resultado, procesa en paralelo
                 }
                 catch (OperationCanceledException) { break; }
                 catch (Exception ex)
@@ -144,7 +144,8 @@ class ServidorWebSimple
                 }
 
                 var path = request.Path == "/" ? "/index.html" : request.Path;
-                var fullPath = ObtenerRutaSegura(path, contentRoot);
+
+                var fullPath = ObtenerRutaSegura(path, contentRoot); // ruta completa al archivo pedido
                 
                 if (fullPath == null)
                 {
@@ -171,9 +172,9 @@ class ServidorWebSimple
     // --------------------------------------------------------------
     // Lectura y parseo de solicitud HTTP
     // --------------------------------------------------------------
-    static async Task<HttpRequest?> LeerSolicitudHttpAsync(NetworkStream stream)
+    static async Task<HttpRequest?> LeerSolicitudHttpAsync(NetworkStream stream) // permite leer los bytes enviados por el cliente
     {
-        var headerBuilder = new StringBuilder();
+        var headerBuilder = new StringBuilder(); // acumula
         var buffer = new byte[BUFFER_SIZE];
         var totalRead = 0;
         var request = new HttpRequest();
@@ -186,19 +187,21 @@ class ServidorWebSimple
         if (bytesRead == 0) return null;
 
         totalRead += bytesRead;
-        var chunk = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-        headerBuilder.Append(chunk);
+        var chunk = Encoding.UTF8.GetString(buffer, 0, bytesRead); // convierte bytes a string
+        headerBuilder.Append(chunk); // acumula y guarda los headers en un string builder
 
         var headerStr = headerBuilder.ToString();
         var headerEnd = headerStr.IndexOf("\r\n\r\n");
+        
         if (headerEnd >= 0)
         {
-            var headerText = headerStr.Substring(0, headerEnd);
-            var remainingData = headerStr.Substring(headerEnd + 4);
+            var headerText = headerStr.Substring(0, headerEnd); // header sin body
+            var remainingData = headerStr.Substring(headerEnd + 4); // datos después de los headers, rnrnrn = 4 chars
 
             // Parsear la línea de solicitud
             var headerLines = headerText.Split("\r\n");
-            var requestLine = headerLines[0].Split(' ');
+            var requestLine = headerLines[0].Split(' '); // método, ruta, versión http - primera línea
+            
             if (requestLine.Length < 2) return null;
 
             request.Method = requestLine[0];
@@ -206,7 +209,7 @@ class ServidorWebSimple
 
             // Parsear URL y query params
             var urlParts = request.RawUrl.Split('?', 2);
-            request.Path = Uri.UnescapeDataString(urlParts[0]);
+            request.Path = Uri.UnescapeDataString(urlParts[0]); // decodificar ruta - 1 = parámetros, si hay
             if (urlParts.Length > 1)
             {
                 request.QueryParams = ParseQueryString(urlParts[1]);
@@ -227,10 +230,10 @@ class ServidorWebSimple
 
             // Leer body si es POST
             if (request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) &&
-                request.Headers.TryGetValue("Content-Length", out var lenStr) &&
+                request.Headers.TryGetValue("Content-Length", out var lenStr) &&    // content -> lenstr -> int contentlength
                 int.TryParse(lenStr, out var contentLength))
             {
-                var bodyBuilder = new MemoryStream();
+                var bodyBuilder = new MemoryStream(); // espacio de memoria para almacenar el body
                 
                 // Procesar datos ya leídos
                 if (!string.IsNullOrEmpty(remainingData))
@@ -241,12 +244,14 @@ class ServidorWebSimple
 
                 // Leer el resto del body
                 var remaining = contentLength - (int)bodyBuilder.Length;
+                
                 while (remaining > 0)
                 {
                     using var bodyCts = new CancellationTokenSource(TIMEOUT_MS);
-                    var toRead = Math.Min(buffer.Length, remaining);
-                    var read = await stream.ReadAsync(buffer, 0, toRead, bodyCts.Token);
-                    if (read == 0) break;
+                    var toRead = Math.Min(buffer.Length, remaining); // cantidad exacta que se van a poder leer
+                    var read = await stream.ReadAsync(buffer, 0, toRead, bodyCts.Token); // desde 0 hasta toRead
+                    
+                    if (read == 0) break; // cliente cerró conexión antes de enviar todo el body
 
                     bodyBuilder.Write(buffer, 0, read);
                     remaining -= read;
@@ -255,7 +260,7 @@ class ServidorWebSimple
                 request.Body = Encoding.UTF8.GetString(bodyBuilder.ToArray());
             }
 
-            return request;
+            return request; // devuelve el objeto HttpRequest con método, url, encabezados y body
         }
     }
 
@@ -268,14 +273,15 @@ class ServidorWebSimple
     static async Task EnviarArchivoAsync(NetworkStream stream, string path, 
         Dictionary<string, string> requestHeaders)
     {
-        var mime = ObtenerMimeType(path);
-        var fileInfo = new FileInfo(path);
+        var mime = ObtenerMimeType(path); // esencial para content-type
+        var fileInfo = new FileInfo(path); // tamaño, nombre y fecha de modificación
         
         var acceptGzip = requestHeaders.TryGetValue("Accept-Encoding", out var enc) && 
                         enc.Contains("gzip", StringComparison.OrdinalIgnoreCase);
         var shouldCompress = acceptGzip && EsComprimible(mime);
 
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+
         var headers = new Dictionary<string, string>
         {
             ["Content-Type"] = mime
@@ -284,11 +290,13 @@ class ServidorWebSimple
         if (shouldCompress)
         {
             headers["Content-Encoding"] = "gzip";
-            headers["Vary"] = "Accept-Encoding";
+            headers["Vary"] = "Accept-Encoding"; // si dos clientes piden el mismo recurso, uno con gzip y otro sin gzip, el servidor debe responder de forma diferente
             
-            await EnviarHeadersAsync(stream, "200 OK", headers);
+            await EnviarHeadersAsync(stream, "200 OK", headers); // construye la linea de estado http seguida de todos los encabezados
+
             using var gzip = new GZipStream(stream, CompressionLevel.Fastest, true);
-            await fs.CopyToAsync(gzip);
+
+            await fs.CopyToAsync(gzip); // envío del archivo comprimido
         }
         else
         {
@@ -330,19 +338,19 @@ class ServidorWebSimple
         };
 
         await EnviarHeadersAsync(stream, status, headers);
-        await stream.WriteAsync(bytes);
+        await stream.WriteAsync(bytes); // envía el cuerpo del mensaje en bytes
     }
 
     static async Task EnviarHeadersAsync(NetworkStream stream, string status, 
         Dictionary<string, string> headers)
     {
-        var sb = new StringBuilder();
+        var sb = new StringBuilder(); // construye la línea de estado http seguida de todos los encabezados
         sb.AppendLine($"HTTP/1.1 {status}");
         foreach (var header in headers)
         {
             sb.AppendLine($"{header.Key}: {header.Value}");
         }
-        sb.AppendLine();
+        sb.AppendLine(); // ya no hay más encabezados
 
         var headerBytes = Encoding.ASCII.GetBytes(sb.ToString());
         await stream.WriteAsync(headerBytes);
@@ -354,36 +362,34 @@ class ServidorWebSimple
     static async Task LogRequestAsync(HttpRequest request, string clientIp)
     {
         var sb = new StringBuilder();
+
         sb.AppendLine("-------------------------");
         sb.AppendLine($"Fecha y hora: {DateTime.UtcNow:O}");
         sb.AppendLine($"IP del cliente: {clientIp}");
-        sb.AppendLine($"Método: {request.Method}");
-        sb.AppendLine($"URL: {request.RawUrl}");
-
-        if (request.QueryParams.Count > 0)
+        
+        if (request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase)) // solo loguea los datos recibidos (body)
         {
-            sb.AppendLine("Parámetros de query:");
+            sb.AppendLine("Datos recibidos:");
+            sb.AppendLine(request.Body);
+        }
+        else if (request.QueryParams.Count > 0) // loguea los parámetros de consulta (query string)
+        {
+            sb.AppendLine("Parámetros de consulta:");
             foreach (var param in request.QueryParams)
             {
                 sb.AppendLine($"  {param.Key} = {param.Value}");
             }
         }
-
-        sb.AppendLine("Headers:");
-        foreach (var header in request.Headers)
+        else // otra solicitud, sólo método y url
         {
-            sb.AppendLine($"  {header.Key}: {header.Value}");
-        }
-
-        if (request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase))
-        {
-            sb.AppendLine("Body:");
-            sb.AppendLine(request.Body);
+            sb.AppendLine($"Método: {request.Method}");
+            sb.AppendLine($"URL: {request.RawUrl}");
         }
 
         sb.AppendLine();
 
-        await LogLock.WaitAsync();
+        await LogLock.WaitAsync(); // la tarea quiere entrar pero espera su turno
+
         try
         {
             var logPath = Path.Combine("logs", $"{DateTime.UtcNow:yyyy-MM-dd}.log");
@@ -413,10 +419,10 @@ class ServidorWebSimple
     // --------------------------------------------------------------
     // Métodos auxiliares
     // --------------------------------------------------------------
-    static string? ObtenerRutaSegura(string requestPath, string contentRoot)
+    static string? ObtenerRutaSegura(string requestPath, string contentRoot) // previene ataques de path traversal
     {
         var decoded = WebUtility.UrlDecode(requestPath.TrimStart('/'));
-        var fullPath = Path.GetFullPath(Path.Combine(contentRoot, decoded));
+        var fullPath = Path.GetFullPath(Path.Combine(contentRoot, decoded)); // combina la ruta del content root con la ruta solicitada
         var contentRootNormalized = contentRoot.EndsWith(Path.DirectorySeparatorChar.ToString()) 
             ? contentRoot 
             : contentRoot + Path.DirectorySeparatorChar;
@@ -447,7 +453,7 @@ class ServidorWebSimple
         foreach (var part in parts)
         {
             var keyValue = part.Split('=', 2);
-            var key = WebUtility.UrlDecode(keyValue[0]);
+            var key = WebUtility.UrlDecode(keyValue[0]); // quita caracteres especiales, url decode decodifica
             var value = keyValue.Length > 1 ? WebUtility.UrlDecode(keyValue[1]) : "";
             dict[key] = value;
         }
